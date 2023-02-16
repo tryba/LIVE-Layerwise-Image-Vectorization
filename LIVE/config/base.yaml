@@ -2,8 +2,9 @@
 default:
   use_ycrcb: False
   seginit:
-    type: circle
-    radius: 5
+    type: rect
+    width: null
+    height: null
   save:
     init: true
     image: true
@@ -13,15 +14,15 @@ default:
   trainable: 
     bg: False
     record: True
-    stroke: False
+    stroke: True
 #  num_segments: 4
   num_iter: 500
   lr_base:
     bg: 0.01
     point: 1
     color: 0.01
-    stroke_width: null
-    stroke_color: null
+    stroke_width: 0.01
+    stroke_color: 0.01
   coord_init:
     type: sparse
   seed: 0
@@ -66,3 +67,7 @@ experiment_1357:
     type: list
     schedule: [1, 3, 5, 7]
 
+experiment_doom:
+  path_schedule:
+    type: list
+    schedule: [16, 16]

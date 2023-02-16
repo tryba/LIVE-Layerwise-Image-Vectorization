@@ -127,6 +127,9 @@ def parse_args():
         cfg.seginit.type = args.seginit[0]
         if cfg.seginit.type == 'circle':
             cfg.seginit.radius = float(args.seginit[1])
+        if cfg.seginit.type == 'rect':
+            cfg.seginit.width = float(args.seginit[1])
+            cfg.seginit.height = float(args.seginit[2])
     return cfg
 
 def ycrcb_conversion(im, format='[bs x 3 x 2D]', reverse=False):
@@ -256,8 +259,10 @@ def init_shapes(num_paths,
             p0 = pos_init_method()
             color_ref = copy.deepcopy(p0)
             points.append(p0)
+            radius = seginit_cfg.radius
+            if radius is None:
+                radius = npr.uniform(0.5, 50)
             for j in range(num_segments):
-                radius = seginit_cfg.radius
                 p1 = (p0[0] + radius * npr.uniform(-0.5, 0.5),
                       p0[1] + radius * npr.uniform(-0.5, 0.5))
                 p2 = (p1[0] + radius * npr.uniform(-0.5, 0.5),
@@ -281,6 +286,55 @@ def init_shapes(num_paths,
             points = get_bezier_circle(
                 radius=radius, segments=num_segments,
                 bias=center)
+        elif seginit_cfg.type=='rect':
+            width = seginit_cfg.width
+            height = seginit_cfg.height
+            if width is None and height is None:
+                width = npr.uniform(0.5, 50)
+                height = npr.uniform(0.5, 50)
+            if width is None:
+                width = height
+            if height is None:
+                height = width
+
+            center = pos_init_method()
+            color_ref = copy.deepcopy(center)
+            points = [
+                (center[0] - width * 0.5, center[1] - height * 0.5),
+                (center[0] - width * 0.25, center[1] - height * 0.5),
+                (center[0] + width * 0.25, center[1] - height * 0.5),
+                (center[0] + width * 0.5, center[1] - height * 0.5),
+                (center[0] + width * 0.5, center[1] - height * 0.25),
+                (center[0] + width * 0.5, center[1] + height * 0.25),
+                (center[0] + width * 0.5, center[1] + height * 0.5),
+                (center[0] - width * 0.25, center[1] + height * 0.5),
+                (center[0] + width * 0.25, center[1] + height * 0.5),
+                (center[0] - width * 0.5, center[1] + height * 0.5),
+                (center[0] - width * 0.5, center[1] - height * 0.25),
+                (center[0] - width * 0.5, center[1] + height * 0.25),
+            ]
+            points = torch.FloatTensor(points)
+
+            """radius = width
+            points = []
+            p0 = pos_init_method()
+            color_ref = copy.deepcopy(p0)
+            points.append(p0)
+            for j in range(num_segments):
+                
+                p1 = (p0[0] + radius * npr.uniform(-0.5, 0.5),
+                      p0[1] + radius * npr.uniform(-0.5, 0.5))
+                p2 = (p1[0] + radius * npr.uniform(-0.5, 0.5),
+                      p1[1] + radius * npr.uniform(-0.5, 0.5))
+                p3 = (p2[0] + radius * npr.uniform(-0.5, 0.5),
+                      p2[1] + radius * npr.uniform(-0.5, 0.5))
+                points.append(p1)
+                points.append(p2)
+                if j < num_segments - 1:
+                    points.append(p3)
+                    p0 = p3
+            print(f"POINTS = {points}")
+            points = torch.FloatTensor(points)"""
 
         path = pydiffvg.Path(num_control_points = torch.LongTensor(num_control_points),
                              points = points,
@@ -368,6 +422,7 @@ if __name__ == "__main__":
         yaml.dump(edict_2_dict(cfg), f)
 
     # Use GPU if available
+    print(f"CUDA is available? {torch.cuda.is_available()}")
     pydiffvg.set_use_gpu(torch.cuda.is_available())
     device = pydiffvg.get_device()
 
@@ -406,13 +461,14 @@ if __name__ == "__main__":
     # Background
     if cfg.trainable.bg:
         # meancolor = gt.mean([2, 3])[0]
-        para_bg = torch.tensor([1., 1., 1.], requires_grad=True, device=device)
+        para_bg = torch.tensor([0., 0., 0.], requires_grad=True, device=device)
     else:
         if cfg.use_ycrcb:
             para_bg = torch.tensor([219/255, 0, 0], requires_grad=False, device=device)
         else:
-            para_bg = torch.tensor([1., 1., 1.], requires_grad=False, device=device)
+            para_bg = torch.tensor([0., 0., 0.], requires_grad=False, device=device)
 
+    print(f"para_bg = {para_bg}")
     ##################
     # start_training #
     ##################
@@ -500,8 +556,8 @@ if __name__ == "__main__":
             scene_args = pydiffvg.RenderFunction.serialize_scene(
                 w, h, shapes_record, shape_groups_record)
             img = render(w, h, 2, 2, t, None, *scene_args)
-
             # Compose img with white background
+            img[:, :, 3] = 1.0
             img = img[:, :, 3:4] * img[:, :, :3] + \
                 para_bg * (1 - img[:, :, 3:4])
 
@@ -633,10 +689,16 @@ if __name__ == "__main__":
             pydiffvg.imwrite(imshow, filename, gamma=gamma)
 
         if cfg.save.output:
+            output_shape_groups = []
+            for shape_group in shape_groups_record:
+                output_shape_group_color =shape_group.fill_color.detach().cpu()
+                output_shape_group_color[3] = 1
+                shape_group.fill_color = output_shape_group_color
+                output_shape_groups.append(shape_group)
             filename = os.path.join(
                 cfg.experiment_dir, "output-svg", "{}.svg".format(pathn_record_str))
             check_and_create_dir(filename)
-            pydiffvg.save_svg(filename, w, h, shapes_record, shape_groups_record)
+            pydiffvg.save_svg(filename, w, h, shapes_record, output_shape_groups)
 
         loss_matrix.append(loss_list)
 
